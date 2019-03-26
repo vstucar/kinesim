@@ -1,0 +1,14 @@
+### General
+*.pyc
+build/
+
+### Common IDEs ###
+
+### Idea ###
+.idea/**
+
+### VSCode ###
+.vscode/**
+
+### Jupyter Notebook ###
+.ipynb_checkpoints/
