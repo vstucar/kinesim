@@ -13,6 +13,52 @@ from PyQt5.QtWidgets import QOpenGLWidget
 from OpenGL.GL import *
 from OpenGL.GL import shaders
 from ctypes import sizeof
+import numpy as np
+#import OpenGL.arrays.vbo
+from OpenGL.arrays.arraydatatype import ArrayDatatype
+
+c_float_p = ctypes.POINTER(ctypes.c_float)
+c_uint32_p = ctypes.POINTER(ctypes.c_uint32)
+
+
+def np_to_float_p(array):
+    return array.ctypes.data_as(c_float_p)
+
+
+def np_to_uint32_p(array):
+    return array.ctypes.data_as(c_float_p)
+
+
+# Simple OpenGL buffer wrapper
+class BufferObject(object):
+
+    # Creates, binds(!) and loads data to the buffer
+    def __init__(self, target, data, usage):
+        self.__target = target
+        self.buffer = glGenBuffers(1)
+        glBindBuffer(target, self.buffer)
+        glBufferData(target, ArrayDatatype.arrayByteCount(data), data, usage)
+
+    # Bind buffer
+    def bind(self):
+        glBindBuffer(self.__target, self.buffer)
+
+    # Unbind buffer
+    def unbind(self):
+        glBindBuffer(self.__target, 0)
+
+
+# Vertex Buffer Object wrapper
+class VBO(BufferObject):
+    def __init__(self, data, usage):
+        super(VBO, self).__init__(GL_ARRAY_BUFFER, data, usage)
+
+
+# Element (Index) Buffer Object wrapper
+class EBO(BufferObject):
+    def __init__(self, data, usage):
+        super(EBO, self).__init__(GL_ELEMENT_ARRAY_BUFFER, data, usage)
+
 
 class OpenGLWidget(QOpenGLWidget):
     def __init__(self, version_profile=None):
@@ -22,11 +68,12 @@ class OpenGLWidget(QOpenGLWidget):
     def initializeGL(self):
         glClearColor(0.1, 0.2, 0.3, 1.0)
 
-        positions = [0.5,  0.5, 0.0,
-                     0.5, -0.5, 0.0,
-                    -0.5, -0.5, 0.0,
-                    -0.5,  0.5, 0.0]
-        indexes = [0, 1, 3, 1, 2, 3]
+        positions = np.array([0.5,  0.5, 0.0,
+                              0.5, -0.5, 0.0,
+                             -0.5, -0.5, 0.0,
+                             -0.5,  0.5, 0.0],
+                             dtype=np.float32)
+        indexes = np.array([0, 1, 3, 1, 2, 3], dtype=np.uint32)
 
         vertex_shader_code = """
         #version 330 core
@@ -52,14 +99,8 @@ class OpenGLWidget(QOpenGLWidget):
 
         self.__vao = glGenVertexArrays(1)
         glBindVertexArray(self.__vao)
-
-        ibo = glGenBuffers(1)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(ctypes.c_uint) * len(indexes), (ctypes.c_uint * len(indexes))(*indexes), GL_STATIC_DRAW)
-
-        vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, vbo)
-        glBufferData(GL_ARRAY_BUFFER, sizeof(ctypes.c_float) * len(positions), (ctypes.c_float * len(positions))(*positions), GL_STATIC_DRAW)
+        ebo = EBO(indexes, GL_STATIC_DRAW)
+        vbo = VBO(positions, GL_STATIC_DRAW)
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(ctypes.c_float), ctypes.c_void_p(0))
         glEnableVertexAttribArray(0)
 
@@ -71,8 +112,8 @@ class OpenGLWidget(QOpenGLWidget):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glUseProgram(self._shader)
         glBindVertexArray(self.__vao)
-        #glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0)
-        glDrawArrays(GL_TRIANGLES, 0, 3)
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0)
+        #glDrawArrays(GL_TRIANGLES, 0, 3)
         glBindVertexArray(0)
 
 
