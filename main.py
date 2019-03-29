@@ -1,56 +1,54 @@
 #!/usr/bin/python
+
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
+import numpy as np
+import logging
+import pygame
+from pygame.locals import *
 from ecs.core import *
+from simulator.components import *
+from render.pygame_render import PyGameRenderSystem
+from simulator.systems import *
+import events
+import log_helper
+
+log_helper.setLevel('Event Bus', logging.WARN)
 
 
-class PositionComponent(BaseComponent):
-    def __init__(self, x=0, y=0):
-        super(self.__class__, self).__init__()
-        self.x = x
-        self.y = y
-
-
-class ControlComponent(BaseComponent):
-    def __init__(self, throttle=0):
-        super(ControlComponent, self).__init__()
-        self.throttle = throttle
-
-
-class VisualComponent(BaseComponent):
-    def __init__(self, wtf):
-        super(self.__class__, self).__init__()
-        self.wtf = wtf
-
-
-def control_system(state):
-    print('render_system update')
-    for control_cmp in state.get_components_by_class(ControlComponent):
-        position_cmp = control_cmp.parent.get_first_component_by_class(PositionComponent)
-        if position_cmp is not None:
-            print('\t#%s: apply throttle %d' % (control_cmp.parent.name, control_cmp.throttle))
-            position_cmp.x += control_cmp.throttle
-
-
-def render_system(state):
-    print('render_system update')
-    for visual_cmp in state.get_components_by_class(VisualComponent):
-        position_cmp = visual_cmp.parent.get_first_component_by_class(PositionComponent)
-        if position_cmp is not None:
-            print('\t#%s: %s at (%d, %d)' % (visual_cmp.parent.name, visual_cmp.wtf, position_cmp.x, position_cmp.y))
+# Game loop stopping
+main_loop = True
+def pyevent_system(state, dt):
+    global main_loop
+    for event in pygame.event.get():
+        if event.type == QUIT:
+            main_loop = False
 
 
 def main():
     engine = Engine()
-    EventBus.subscribe(stdevent.EVENT_UPDATE, control_system)
-    EventBus.subscribe(stdevent.EVENT_UPDATE, render_system)
 
+    # Setup all systems. The order is important
+    EventBus.subscribe(stdevent.EVENT_UPDATE, pyevent_system)
+    EventBus.subscribe(stdevent.EVENT_UPDATE, control_system)
+    render_system = PyGameRenderSystem()
+
+    # Create entity
     car = Entity('car1')
-    car.add_component(PositionComponent(0, 0))
-    car.add_component(VisualComponent('car_visual'))
-    car.add_component(ControlComponent(1))
+    car.add_component(PositionComponent(np.array([100.0, 100.0])))
+    car.add_component(VisualComponent((255, 0, 0)))
+    car.add_component(ControlComponent(np.array([10, 0])))
+    car.add_component(KinematicComponent((60, 30)))
     engine.add_entity(car)
 
-    for i in range(5):
-        engine.update()
+    # Notify renderer that all graphics is set
+    EventBus.publish(events.EVENT_INIT_GRAPHICS, engine)
+
+    clock = pygame.time.Clock()
+    while main_loop:
+        clock.tick(30)
+        engine.update(1/30.0)
 
 
 if __name__ == '__main__':

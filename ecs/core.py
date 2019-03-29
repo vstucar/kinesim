@@ -1,4 +1,13 @@
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
 import stdevent
+import log_helper
+import logging
+
+event_logger = log_helper.getLogger('Event Bus')
+engine_logger = log_helper.getLogger('ECS Core')
+
 
 class EventBus(object):
     """
@@ -14,29 +23,65 @@ class EventBus(object):
     """
 
     __events = {}
+    __latched_events = {}
 
     @staticmethod
     def subscribe( id, callback):
-        if id not in EventBus.__events:
-            EventBus.__register(id)
+        """
+        Registers callback for the event with given ID
+        :param id: Event id
+        :param callback: Callback called when event is published
+        """
+        EventBus.__register_is_not(id)
         EventBus.__events[id].append(callback)
+        event_logger.debug('Event {} subscribed'.format(id))
+
+        if id in EventBus.__latched_events:
+            event_logger.debug('Latched event {} sent to the new subscriber'.format(id))
+            callback(*EventBus.__latched_events[id])
 
     @staticmethod
     def unsubscribe(id, callback):
+        """
+        Unregisters callback for the event with given ID
+        :param id: Event id
+        :param callback: Callback to unregister
+        """
         if id in EventBus.__events:
             del EventBus.__events[callback]
+            event_logger.debug('Event {} unsubscribed'.format(id))
 
     @staticmethod
-    def publish(id, data):
-        if id not in EventBus.__events:
-            EventBus.__register(id)
+    def publish(id, *args):
+        """
+        Publishes normal event with given ID.
+        Normal events are published immediately to the already registered callbacks.
+        :param id: Event ID
+        :param args: Data will be send to every callback
+        """
+        EventBus.__register_is_not(id)
+        event_logger.debug('Event {} published'.format(id))
         for callback in EventBus.__events[id]:
-            callback(data)
+            callback(*args)
 
     @staticmethod
-    def __register(id):
-        print('Event %d registred' % id)
+    def publish_latched(id, *args):
+        """
+        Publishes latched event with given ID.
+        Latched events are stored and will  be delivered later to every new callback
+        subscribed to this event. Only one latched event is stored, new latched event
+        will rewrite previous.
+        :param id: Event ID
+        :param args: Data will be send to every callback
+        """
+        EventBus.publish(id, args)
+        event_logger.debug('Latched event {} stored'.format(id))
+        EventBus.__latched_events[id] = args
+
+    @staticmethod
+    def __register_is_not(id):
         if id not in EventBus.__events:
+            event_logger.debug('Event {} registred'.format(id))
             EventBus.__events[id] = []
 
 
@@ -46,27 +91,26 @@ class Engine(object):
     """
 
     def __init__(self):
-        print('Engine init')
+        engine_logger.debug('Initialization')
         self.__entities = []
         self.__components = []
 
         EventBus.subscribe(stdevent.EVENT_COMPONENT_ADDED, self.__component_added)
         EventBus.subscribe(stdevent.EVENT_COMPONENT_REMOVED, self.__component_removed)
-        EventBus.publish(stdevent.EVENT_SETUP, self)
+        EventBus.publish_latched(stdevent.EVENT_SETUP, self)
 
     def __del__(self):
-        EventBus.publish(stdevent.EVENT_TEARDOWN)
+        engine_logger.debug('Deinitialization')
+        EventBus.publish_latched(stdevent.EVENT_TEARDOWN)
 
     def __component_added(self, component):
-        print('component {} added to engine'.format(component))
         self.__components.append(component)
 
     def __component_removed(self, component):
-        print('component {} removed from engine'.format(component))
         self.__components.remove(component)
 
-    def update(self):
-        EventBus.publish(stdevent.EVENT_UPDATE, self)
+    def update(self, dt):
+        EventBus.publish(stdevent.EVENT_UPDATE, self, dt)
 
     def add_entity(self, entity):
         if entity not in self.__entities:
@@ -88,6 +132,10 @@ class Engine(object):
         return [comp for comp in self.__components if isinstance(comp, component_class)]
 
 
+class Holder(object):
+    pass
+
+
 class BaseComponent(object):
     """
     Base class for components, allows access to it's parent entity
@@ -95,6 +143,7 @@ class BaseComponent(object):
 
     def __init__(self):
         self.__parent = None
+        self.ext = Holder()
 
     def added(self, parent):
         """
@@ -113,6 +162,7 @@ class BaseComponent(object):
         """
         if self.__parent is not None:
             self.__parent = None
+            self.ext = Holder()
         else:
             raise SystemError('Component not added to entity')
 
@@ -188,7 +238,10 @@ class Entity(object):
         :return: List of components with class @component_class or empty list
                  if there is no components with given class
         """
-        return self.__components[component_class]
+        if component_class in self.__components:
+            return self.__components[component_class]
+        else:
+            return []
 
     def get_first_component_by_class(self, component_class):
         """

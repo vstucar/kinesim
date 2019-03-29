@@ -1,3 +1,6 @@
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
 # Standart ECS's events
 EVENT_COMPONENT_ADDED = 1
 EVENT_COMPONENT_REMOVED = 2
