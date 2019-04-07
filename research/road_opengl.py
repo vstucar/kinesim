@@ -1,11 +1,12 @@
 import glfw
 from OpenGL.GL import *
-from OpenGL.GL import shaders
 from OpenGL.arrays.arraydatatype import ArrayDatatype
+from OpenGL.GL.ARB.texture_rg import *
 from ctypes import sizeof
 import numpy as np
 import matplotlib.pyplot as plt
 import glm
+from time import sleep
 
 def create_context():
     if not glfw.init():
@@ -46,37 +47,107 @@ class BufferObject(object):
 # Vertex Buffer Object wrapper
 class VBO(BufferObject):
     def __init__(self, data, usage):
-        super(VBO, self).__init__(GL_ARRAY_BUFFER, data, usage)
+        super(self.__class__, self).__init__(GL_ARRAY_BUFFER, data, usage)
 
 
 # Element (Index) Buffer Object wrapper
 class EBO(BufferObject):
     def __init__(self, data, usage):
-        super(EBO, self).__init__(GL_ELEMENT_ARRAY_BUFFER, data, usage)
+        super(self.__class__, self).__init__(GL_ELEMENT_ARRAY_BUFFER, data, usage)
 
+
+class Shader(object):
+    def __init__(self, shader_type, source, name = None):
+        self.__shader = glCreateShader(shader_type)
+        self.__name = name
+        glShaderSource(self.__shader, source)
+        glCompileShader(self.__shader)
+        if glGetShaderiv(self.__shader, GL_COMPILE_STATUS) != 1:
+            message = glGetShaderInfoLog(self.__shader)
+            print('Shader "%s" compilation error:' % self.name)
+            print(message)
+            print(source)
+            raise ValueError('Shader "%s" compilation error' % self.name)
+
+    def __del__(self):
+        glDeleteShader(self.__shader)
+
+
+    @property
+    def shader(self):
+        return self.__shader
+
+    @property
+    def name(self):
+        return self.__name if self.__name is not None else 'Unnamed shader'
+
+
+class VertexShader(Shader):
+    def __init__(self, source, name=None):
+        super(self.__class__, self).__init__(GL_VERTEX_SHADER, source, name)
+
+class FragmentShader(Shader):
+    def __init__(self, source, name=None):
+        super(self.__class__, self).__init__(GL_FRAGMENT_SHADER, source, name)
+
+class ShaderProgram(object):
+    def __init__(self, shaders, name=None):
+        self.__program = glCreateProgram()
+        for shader in shaders:
+            print('Attach %s' % shader.name)
+            glAttachShader(self.__program, shader.shader)
+        glLinkProgram(self.__program)
+        if glGetProgramiv(self.__program, GL_LINK_STATUS) != 1:
+            message = glGetProgramInfoLog(self.__program)
+            print('Shader program "%s" linking error:' % name)
+            print(message)
+            raise ValueError('Shader program "%s" linking error:' % name)
+        else:
+            print('Shader program "%s" linked' % name)
+
+    @property
+    def program(self):
+        return self.__program
+    
+    @property
+    def name(self):
+        return self.__name if self.__name is not None else 'Unnamed shader program'
+
+    def use(self):
+        glUseProgram(self.__program)
+
+    def unuse(self):
+        glUseProgram(0)
+    
+
+
+class MainShaderProgram(ShaderProgram):
+    def __init__(self):
+        vertex_shader = VertexShader(vertex_shader_code, 'vertex')
+        fragment_shader = FragmentShader(fragment_shader_code, 'fragment')
+        super(self.__class__, self).__init__([vertex_shader, fragment_shader], 'main_program')
+
+        self.__uniform_proj = glGetUniformLocation(self.program, 'm_projection')
+        self.__uniform_view = glGetUniformLocation(self.program, 'm_view')
+        self.__uniform_model = glGetUniformLocation(self.program, 'm_model')
+
+        self.use()
+        self.set_proj(glm.mat4(1.0))
+        self.set_view(glm.mat4(1.0))
+        self.set_model(glm.mat4(1.0))
+        self.unuse()
+
+    def set_proj(self, matrix):
+        glUniformMatrix4fv(self.__uniform_proj, 1, GL_FALSE, glm.value_ptr(matrix))
+
+    def set_view(self, matrix):
+        glUniformMatrix4fv(self.__uniform_view, 1, GL_FALSE, glm.value_ptr(matrix))
+
+    def set_model(self, matrix):
+        glUniformMatrix4fv(self.__uniform_model, 1, GL_FALSE, glm.value_ptr(matrix))
 
 ####################################################
 
-def draw_vec(P, vec, length):
-    P1 = P + vec/np.linalg.norm(vec) * length
-    coords = np.vstack([P, P1])
-    plt.plot(coords[:,0], coords[:,1])
-
-def draw_point(P):
-    plt.plot([P[0]], [P[1]], 'o')
-    
-def draw_line(A, B):
-    coords = np.vstack([A, B])
-    plt.plot(coords[:,0], coords[:,1])
-
-def draw_segment(A1, B1, A2, B2):
-    draw_line(A1, A2)
-    draw_line(B1, B2)
-    draw_line(A2, B2)
-
-def draw_tri(A, B, C):
-    coords = np.vstack([A, B, C])
-    plt.fill(coords[:,0], coords[:,1])    
 
 # Calculate instersection coordinates of two line defined by
 # direction vector and point
@@ -90,59 +161,63 @@ def normalize(vec):
     return vec/np.linalg.norm(vec)
 
 # Triangulate one segment of the lane
-# Road consists of two lanes
-def triangulate_lane_segment(P1, P2, O1, O2, color, data):
-    color = np.append(np.random.random((3)), 1)
+def triangulate_line_segment(P1, P2, O1, O2, color, data):
     data.extend([P1, color, P2, color, O1, color])
-    color = np.append(np.random.random((3)), 1)
     data.extend([O1, color, P2, color, O2, color])
-    draw_tri(P1, P2, O1)
-    draw_tri(O1, P2, O2)
 
+# Triangulate one segment of the road 
+# Road consists of multiple lines
+# Assume all arrays have same length
+def triangulate_segment(cur_points, next_points, colors, data):
+    for i in range(len(cur_points)-1):
+        triangulate_line_segment(cur_points[i], cur_points[i+1], next_points[i], next_points[i+1],
+                                 colors[i], data)
+
+# Create colors (test code)
+def create_colors(lines_cnt):
+    rng = range(lines_cnt/2)
+    return np.concatenate([
+        [np.array([1]) for val in rng[::-1]],
+        [np.array([2]) for val in rng]
+    ])    
 
 # Generate vertex data for road segment
-def create_road(points, width):
-    up = np.array([0,0,1])
-    color = np.array([1,0,0,1])
-    plt.plot(points[:,0], points[:,1])
+# Support only even count of lines
+# Indexes starts from center line
+def create_road(points, lines_cnt, lines_width):
 
+    if len(points) < 2:
+        raise ValueError('Road should contains at least two points')
+
+    if lines_cnt % 2 != 0:
+        raise ValueError('Odd lines count not supported')
+
+    if lines_width <= 0:
+        raise ValueError('Lines width should be greater then zero')
+
+    up = np.array([0,0,1])
+    colors = create_colors(lines_cnt)
     vertex_data = []
 
+    offsets = (np.arange(-lines_cnt/2, lines_cnt/2 + 1) * lines_width).reshape((lines_cnt+1, 1))
     v1 = normalize(points[1] - points[0])
     n1 = np.cross(up, v1)[:2]
-    A1 = points[0] + n1 * width/2
-    B1 = points[0] - n1 * width/2
+    cur_points = points[0] + n1*offsets
 
-    for i in range(len(points)-2):
-        O1 = points[i]
-        O2 = points[i+1]
-
-        v2 = normalize(points[i+2] - points[i+1])
+    for seg_i in range(len(points)-2):
+        v2 = normalize(points[seg_i+2] - points[seg_i+1])
         n2 = np.cross(up, v2)[:2]
         n = (n1 + n2)/2
-
-        A2 = line_intersect(A1, v1, O2, n)
-        B2 = line_intersect(B1, v1, O2, -n)
+        next_points = np.array([line_intersect(p, v1, points[seg_i+1], n) for p in cur_points])
+        triangulate_segment(cur_points, next_points, colors, vertex_data)
         
-        #draw_segment(A1, B1, A2, B2)
-        triangulate_lane_segment(A1, A2, O1, O2, color, vertex_data)
-        triangulate_lane_segment(B1, B2, O1, O2, color, vertex_data)
-        
-        A1 = A2
-        B1 = B2
         n1 = n2
         v1 = v2
-    
-    O1 = points[-2]
-    O2 = points[-1]    
-    A2 = O2 + n1 * width/2
-    B2 = O2 - n1 * width/2
-    #draw_segment(A1, B1, A2, B2)
-    triangulate_lane_segment(A1, A2, O1, O2, color, vertex_data)
-    triangulate_lane_segment(B1, B2, O1, O2, color, vertex_data)
+        cur_points = next_points
 
-    #plt.gca().set_aspect('equal', adjustable='box')
-    #plt.show()
+
+    next_points = points[-1] + n1*offsets
+    triangulate_segment(cur_points, next_points, colors, vertex_data)
     return np.concatenate(vertex_data).astype(np.float32)
 
 ####################################################
@@ -151,17 +226,17 @@ vertex_shader_code = """
 #version 330 core
 
 layout (location = 0) in vec2 position;
-layout (location = 1) in vec4 color;
+layout (location = 1) in uint color;
 
-out vec4 vertex_color;
+flat out uint vertex_color;
 
-uniform mat4 m_position;
-uniform mat4 m_camera;
+uniform mat4 m_model;
+uniform mat4 m_view;
 uniform mat4 m_projection;
 
 void main()
 {
-    gl_Position = m_projection * vec4(position.x, position.y, 0, 1.0);
+    gl_Position = m_projection * m_view * m_model * vec4(position, 0, 1.0);
     vertex_color = color;
 }
 """
@@ -169,17 +244,40 @@ void main()
 fragment_shader_code = """
 #version 330 core
 
-in vec4 vertex_color;
-out vec4 color;
+flat in uint vertex_color;
+out uint color;
 
 void main()
 {
-    color = vertex_color;
+    color = 1u; //vertex_color;
 }
 """
 
-vertex_dtype = [('pos', np.float32, 2),
-                ('color', np.float32, 4)]
+dbg_vertex_shader_code = """
+#version 330 core
+layout (location = 0) in vec2 in_position;
+layout (location = 1) in vec2 in_tex_coords;
+out vec2 tex_coords;
+
+void main()
+{
+    gl_Position = vec4(in_position, 0.0f, 1.0f);
+    tex_coords = in_tex_coords;
+}
+"""
+
+dbg_fragment_shader_code = """
+#version 330 core
+in  vec2 tex_coords;
+out vec4 color;
+  
+uniform sampler2D fbo_attachment;
+  
+void main()
+{
+    color = texture(fbo_attachment, tex_coords) + vec4(0.0, 0.1, 0.0, 1.0);
+} 
+"""
 
 def main():
 
@@ -196,69 +294,88 @@ def main():
         [30, 0]
     ])
 
-    vertices = create_road(points, 6)
-    
-    #vertices = np.array([
-    #    -0.8,  0.8, 1,0,0,1,
-    #     0.0,  0.8, 1,0,0,1,
-    #     0.0, -0.8, 1,0,0,1,
-    #     0.8,  0.8, 0,1,0,1,
-    #     0.0,  0.8, 0,1,0,1,
-    #     0.0, -0.8, 0,1,0,1 
-    #], dtype=np.float32)
-
+    vertices = create_road(points, 6, 1)
 
     # Create shaders
-    vertex_shader = shaders.compileShader(vertex_shader_code, GL_VERTEX_SHADER)
-    fragment_shader = shaders.compileShader(fragment_shader_code, GL_FRAGMENT_SHADER)
-    shader_program = shaders.compileProgram(vertex_shader, fragment_shader)
-    glDeleteShader(vertex_shader)
-    glDeleteShader(fragment_shader)
+    shader_program = MainShaderProgram()
 
     # Transformations
-    uniform_proj = glGetUniformLocation(shader_program, 'm_projection')
-    uniform_camera = glGetUniformLocation(shader_program, 'm_camera')
-    uniform_pos = glGetUniformLocation(shader_program, 'm_position')    
-    
-    mat_proj = glm.ortho(-5.0, 40.0, -5.0, 30.0, -1.0, 1.0)
-    mat_camera = glm.mat4(1.0)
-    mat_position = glm.mat4(1.0)
-
-    glUseProgram(shader_program)
-    glUniformMatrix4fv(uniform_proj, 1, GL_FALSE, glm.value_ptr(mat_proj))
-    #glUniformMatrix4fv(uniform_camera, 1, GL_FALSE, glm.value_ptr(mat_camera))
-    #glUniformMatrix4fv(uniform_pos, 1, GL_FALSE, glm.value_ptr(mat_position))
-
-
+    shader_program.use()
+    shader_program.set_proj(glm.ortho(-5.0, 40.0, -5.0, 40.0, -1.0, 1.0))
+    shader_program.unuse()
 
     # Create buffers
     vao = glGenVertexArrays(1)
     glBindVertexArray(vao)
-
     vbo = VBO(vertices, GL_STATIC_DRAW)
-
-    # Position data
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_TRUE, 6 * sizeof(ctypes.c_float), ctypes.c_void_p(0))
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(ctypes.c_float), ctypes.c_void_p(0))
     glEnableVertexAttribArray(0)
-
-    # Color data
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(ctypes.c_float), ctypes.c_void_p(2*sizeof(ctypes.c_float)))
+    glVertexAttribPointer(1, 1, GL_UNSIGNED_BYTE, GL_FALSE, 3 * sizeof(ctypes.c_float), ctypes.c_void_p(2*sizeof(ctypes.c_float)))
     glEnableVertexAttribArray(1)
     vbo.unbind()
-
     glBindVertexArray(0)
 
-    glClearColor(0.1, 0.2, 0.3, 1.0)
-    while not glfw.window_should_close(window):
-        glClear(GL_COLOR_BUFFER_BIT)
-        
-        glUseProgram(shader_program)
-        glBindVertexArray(vao)
-        glDrawArrays(GL_TRIANGLES, 0, len(vertices))
-        glBindVertexArray(0)
+    # Debug quad to draw texture
+    vertex_shader = VertexShader(dbg_vertex_shader_code, 'dbg_vertex')
+    fragment_shader = FragmentShader(dbg_fragment_shader_code, 'dbg_fragment')
+    dbg_shader_program = ShaderProgram([vertex_shader, fragment_shader], 'dbg_program')
 
-        glfw.swap_buffers(window)
-        glfw.poll_events()
+    dbg_vertices = np.array([
+        -1,  1,    0,  1,
+         1,  1,    1,  1,
+        -1, -1,    0,  0, 
+        -1, -1,    0,  0,
+         1,  1,    1,  1,
+         1, -1,    1,  0
+    ], dtype=np.float32)
+
+    dbg_vao = glGenVertexArrays(1)
+    glBindVertexArray(dbg_vao)
+    dbg_vbo = VBO(dbg_vertices, GL_STATIC_DRAW)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(ctypes.c_float), ctypes.c_void_p(0))
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(ctypes.c_float), ctypes.c_void_p(2*sizeof(ctypes.c_float)))
+    glEnableVertexAttribArray(1)
+    dbg_vbo.unbind()
+    glBindVertexArray(0)
+    
+    TEX_WIDTH = 100
+    TEX_HEIGHT = 100
+
+    # Render to the texture
+    texture = glGenTextures(1)
+    glBindTexture(GL_TEXTURE_2D, texture)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8UI, TEX_WIDTH, TEX_HEIGHT, 0, GL_RED_INTEGER, GL_UNSIGNED_BYTE, None)
+    glBindTexture(GL_TEXTURE_2D, 0)
+
+    framebuffer = glGenFramebuffers(1)
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer)
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0)
+    if glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
+        print('Failed to init framebuffer')
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    # Do render
+    glViewport(0, 0, TEX_WIDTH, TEX_HEIGHT)
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer)
+    glClearColor(0.0, 0.0, 0.0, 0.0)
+    glClear(GL_COLOR_BUFFER_BIT)
+    shader_program.use()
+    glBindVertexArray(vao)
+    glDrawArrays(GL_TRIANGLES, 0, len(vertices))
+    glBindVertexArray(0)
+    array = np.frombuffer(glReadPixels(0, 0, TEX_WIDTH, TEX_HEIGHT, GL_RED_INTEGER, GL_UNSIGNED_BYTE), dtype=np.ubyte)
+    glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    print(array)
+    array = array.reshape(TEX_WIDTH, TEX_HEIGHT)
+    print(array.shape)
+    plt.imshow(array)
+    plt.show()
 
     glfw.terminate()
 
