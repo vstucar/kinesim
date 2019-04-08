@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import glm
 from time import sleep
+import struct
 
 def create_context():
     if not glfw.init():
@@ -148,6 +149,9 @@ class MainShaderProgram(ShaderProgram):
 
 ####################################################
 
+vertex_dtype = [('pos', np.float32, 2),
+                ('color', np.ubyte, 1)]
+
 
 # Calculate instersection coordinates of two line defined by
 # direction vector and point
@@ -160,10 +164,13 @@ def line_intersect(P1, v1, P2, v2):
 def normalize(vec):
     return vec/np.linalg.norm(vec)
 
+def make_vertex(point, color):
+    return np.array([(point, color)], dtype=vertex_dtype)
+
 # Triangulate one segment of the lane
 def triangulate_line_segment(P1, P2, O1, O2, color, data):
-    data.extend([P1, color, P2, color, O1, color])
-    data.extend([O1, color, P2, color, O2, color])
+    data.extend([make_vertex(P1, color), make_vertex(P2, color), make_vertex(O1, color)])
+    data.extend([make_vertex(O1, color), make_vertex(P2, color), make_vertex(O2, color)])
 
 # Triangulate one segment of the road 
 # Road consists of multiple lines
@@ -177,8 +184,8 @@ def triangulate_segment(cur_points, next_points, colors, data):
 def create_colors(lines_cnt):
     rng = range(lines_cnt/2)
     return np.concatenate([
-        [np.array([1]) for val in rng[::-1]],
-        [np.array([2]) for val in rng]
+        [10+i+1 for i in rng[::-1]],
+        [i+1 for i in rng]
     ])    
 
 # Generate vertex data for road segment
@@ -197,6 +204,7 @@ def create_road(points, lines_cnt, lines_width):
 
     up = np.array([0,0,1])
     colors = create_colors(lines_cnt)
+    print(colors)
     vertex_data = []
 
     offsets = (np.arange(-lines_cnt/2, lines_cnt/2 + 1) * lines_width).reshape((lines_cnt+1, 1))
@@ -218,7 +226,8 @@ def create_road(points, lines_cnt, lines_width):
 
     next_points = points[-1] + n1*offsets
     triangulate_segment(cur_points, next_points, colors, vertex_data)
-    return np.concatenate(vertex_data).astype(np.float32)
+
+    return np.concatenate(vertex_data)
 
 ####################################################
 
@@ -249,34 +258,8 @@ out uint color;
 
 void main()
 {
-    color = 1u; //vertex_color;
+    color = vertex_color;
 }
-"""
-
-dbg_vertex_shader_code = """
-#version 330 core
-layout (location = 0) in vec2 in_position;
-layout (location = 1) in vec2 in_tex_coords;
-out vec2 tex_coords;
-
-void main()
-{
-    gl_Position = vec4(in_position, 0.0f, 1.0f);
-    tex_coords = in_tex_coords;
-}
-"""
-
-dbg_fragment_shader_code = """
-#version 330 core
-in  vec2 tex_coords;
-out vec4 color;
-  
-uniform sampler2D fbo_attachment;
-  
-void main()
-{
-    color = texture(fbo_attachment, tex_coords) + vec4(0.0, 0.1, 0.0, 1.0);
-} 
 """
 
 def main():
@@ -292,9 +275,9 @@ def main():
         [15,15],
         [30, 15],
         [30, 0]
-    ])
+    ], dtype=np.float32)
 
-    vertices = create_road(points, 6, 1)
+    vertices = create_road(points, 6, 1)    
 
     # Create shaders
     shader_program = MainShaderProgram()
@@ -308,35 +291,11 @@ def main():
     vao = glGenVertexArrays(1)
     glBindVertexArray(vao)
     vbo = VBO(vertices, GL_STATIC_DRAW)
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 3 * sizeof(ctypes.c_float), ctypes.c_void_p(0))
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2*4+1, ctypes.c_void_p(0))
     glEnableVertexAttribArray(0)
-    glVertexAttribPointer(1, 1, GL_UNSIGNED_BYTE, GL_FALSE, 3 * sizeof(ctypes.c_float), ctypes.c_void_p(2*sizeof(ctypes.c_float)))
+    glVertexAttribIPointer(1, 1, GL_UNSIGNED_BYTE, 2*4+1, ctypes.c_void_p(2*4))
     glEnableVertexAttribArray(1)
     vbo.unbind()
-    glBindVertexArray(0)
-
-    # Debug quad to draw texture
-    vertex_shader = VertexShader(dbg_vertex_shader_code, 'dbg_vertex')
-    fragment_shader = FragmentShader(dbg_fragment_shader_code, 'dbg_fragment')
-    dbg_shader_program = ShaderProgram([vertex_shader, fragment_shader], 'dbg_program')
-
-    dbg_vertices = np.array([
-        -1,  1,    0,  1,
-         1,  1,    1,  1,
-        -1, -1,    0,  0, 
-        -1, -1,    0,  0,
-         1,  1,    1,  1,
-         1, -1,    1,  0
-    ], dtype=np.float32)
-
-    dbg_vao = glGenVertexArrays(1)
-    glBindVertexArray(dbg_vao)
-    dbg_vbo = VBO(dbg_vertices, GL_STATIC_DRAW)
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(ctypes.c_float), ctypes.c_void_p(0))
-    glEnableVertexAttribArray(0)
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(ctypes.c_float), ctypes.c_void_p(2*sizeof(ctypes.c_float)))
-    glEnableVertexAttribArray(1)
-    dbg_vbo.unbind()
     glBindVertexArray(0)
     
     TEX_WIDTH = 100
@@ -371,9 +330,15 @@ def main():
     array = np.frombuffer(glReadPixels(0, 0, TEX_WIDTH, TEX_HEIGHT, GL_RED_INTEGER, GL_UNSIGNED_BYTE), dtype=np.ubyte)
     glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
-    print(array)
     array = array.reshape(TEX_WIDTH, TEX_HEIGHT)
-    print(array.shape)
+    d={}
+    for a in array.flatten():
+        if a not in d:
+            d[a]=1
+        else:
+            d[a]+=1
+
+    print(d)
     plt.imshow(array)
     plt.show()
 
