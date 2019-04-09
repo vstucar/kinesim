@@ -274,7 +274,7 @@ def main():
         [10, 10],
         [15,15],
         [30, 15],
-        [30, 0]
+        [45, 0]
     ], dtype=np.float32)
 
     vertices = create_road(points, 6, 1)    
