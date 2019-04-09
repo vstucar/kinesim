@@ -1,3 +1,6 @@
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
 import glfw
 from OpenGL.GL import *
 from OpenGL.arrays.arraydatatype import ArrayDatatype

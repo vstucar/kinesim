@@ -7,12 +7,13 @@ import numpy as np
 import logging
 import pygame
 from pygame.locals import *
-from ecs.core import *
-from simulator.components import *
-from render.pygame_render import PyGameRenderSystem
-from simulator.systems import *
-import events
-import log_helper
+
+from simulator.ecs.core import *
+from simulator.components.components import *
+from simulator.systems.systems import *
+from simulator.systems.render.pygame_render import PyGameRenderSystem
+import simulator.events as events
+import simulator.helpers.log_helper
 
 log_helper.setLevel('Event Bus', logging.WARN)
 

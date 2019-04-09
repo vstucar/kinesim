@@ -1,7 +1,13 @@
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
 import pygame
-from simulator.systems import *
-import log_helper
-import events
+from simulator.ecs.core import EventBus
+import simulator.ecs.stdevent as stdevent
+from simulator.components.components import *
+from simulator.systems.systems import *
+import simulator.events as events
+import simulator.helpers.log_helper as log_helper
 
 render_logger = log_helper.getLogger('Render')
 
@@ -75,7 +81,6 @@ class PyGameRenderSystem:
             visual_comp.ext.sprite = sprite
             sprites.append(sprite)
         self.__allsprites = pygame.sprite.RenderPlain(sprites)
-        print(sprites)
 
     # Deinit pygame
     def __teardown(self, engine):

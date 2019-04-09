@@ -1,4 +1,7 @@
-from ecs.core import *
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
+from simulator.ecs.core import *
 import numpy as np
 
 

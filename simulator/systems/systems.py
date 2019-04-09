@@ -1,4 +1,7 @@
-from components import *
+# This file is licensed under MIT license.
+# See the LICENSE file in the project root for more information.
+
+from simulator.components.components import *
 
 
 def control_system(state, dt):

@@ -16,7 +16,6 @@ import sys
 _max_name_length = 0
 __registered_loggers = []
 
-
 class FacnyFormatter(logging.Formatter):
     __levels = {
         logging.FATAL:  '\033[31m[FATAL]',
@@ -54,8 +53,6 @@ def getLogger(name):
 
 def setLevel(logger, level):
     logger = logging.getLogger(logger)
-    print(logger.name)
-    print(logger.handlers)
     logger.handlers[0].setLevel(level)
 
 
